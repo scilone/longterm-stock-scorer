@@ -27,18 +27,7 @@ function runPythonScorecard(array $argv): int
         $cmd = array_merge([$pythonBin, $scriptPath], array_slice($argv, 1));
         $escaped = implode(' ', array_map('escapeshellarg', $cmd));
 
-        $descriptors = [
-            0 => ['file', 'php://stdin', 'r'],
-            1 => ['file', 'php://stdout', 'w'],
-            2 => ['file', 'php://stderr', 'w'],
-        ];
-
-        $process = proc_open($escaped, $descriptors, $pipes, __DIR__);
-        if (!is_resource($process)) {
-            continue;
-        }
-
-        $status = proc_close($process);
+        passthru($escaped, $status);
         if ($status === 127) {
             continue;
         }
@@ -50,4 +39,4 @@ function runPythonScorecard(array $argv): int
     return 127;
 }
 
-exit(runPythonScorecard($_SERVER['argv'] ?? []));
+exit(runPythonScorecard($argv));
