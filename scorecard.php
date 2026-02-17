@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 const SCORING_NORMALIZATION_ENABLED = true;
-const VERBOSE = false;
 
 const HIGH_YIELD_DIVIDEND_PENALTY_ENABLED = true;
 const HIGH_YIELD_DIVIDEND_PENALTY_POINTS = 1;
@@ -594,9 +593,16 @@ function fetch_json(string $url): array {
         ],
     ]);
 
-    $content = @file_get_contents($url, false, $context);
+    $errorMessage = null;
+    set_error_handler(static function (int $severity, string $message) use (&$errorMessage): bool {
+        $errorMessage = $message;
+        return true;
+    });
+    $content = file_get_contents($url, false, $context);
+    restore_error_handler();
     if ($content === false) {
-        throw new RuntimeException("Failed to fetch URL: {$url}");
+        $details = $errorMessage ? " ({$errorMessage})" : '';
+        throw new RuntimeException("Failed to fetch URL: {$url}{$details}");
     }
     $json = json_decode($content, true);
     if (!is_array($json)) {
@@ -606,7 +612,7 @@ function fetch_json(string $url): array {
 }
 
 function resolve_symbol(string $symbol): string {
-    if (preg_match('/^[A-Z0-9\.\-\^=]{1,20}$/i', $symbol)) {
+    if (preg_match('/^[A-Z0-9]([A-Z0-9\.\-]{0,18}[A-Z0-9])?$/i', $symbol)) {
         return strtoupper($symbol);
     }
 
@@ -752,8 +758,16 @@ function analyze_portfolio(array $symbols, bool $isCli): array {
 
 function export_csv(array $results, string $filepath): void {
     $fields = ['Ticker','Name','Profil','Score','Recommendation','Flags','yield_pct','payout_pct','pegy','pe_fwd','pe_ttm','pb','roe','roa','beta','debtToEquity','overallRisk'];
+    $errorMessage = null;
+    set_error_handler(static function (int $severity, string $message) use (&$errorMessage): bool {
+        $errorMessage = $message;
+        return true;
+    });
     $f = fopen($filepath, 'wb');
+    restore_error_handler();
     if ($f === false) {
+        $details = $errorMessage ? " ({$errorMessage})" : '';
+        fwrite(STDERR, "Warning: unable to write CSV file: {$filepath}{$details}" . PHP_EOL);
         return;
     }
     fputcsv($f, $fields);
@@ -807,9 +821,12 @@ function parse_cli_arguments(array $argv): array {
     }
 
     if (($args[0] ?? '') === '--self-test') {
-        assert(abs(normalize_yield_fraction(4.37) - 0.0437) < 0.0001);
-        assert(abs(normalize_yield_fraction(0.0437) - 0.0437) < 0.0001);
-        assert(abs(normalize_payout_ratio(2.2059) - 2.2059) < 0.0001);
+        if (abs(normalize_yield_fraction(4.37) - 0.0437) >= 0.0001 ||
+            abs(normalize_yield_fraction(0.0437) - 0.0437) >= 0.0001 ||
+            abs(normalize_payout_ratio(2.2059) - 2.2059) >= 0.0001) {
+            fwrite(STDERR, "Unit tests failed!" . PHP_EOL);
+            exit(1);
+        }
         fwrite(STDOUT, "Unit tests passed!" . PHP_EOL);
         exit(0);
     }
@@ -868,6 +885,13 @@ function run_web(): void {
     }
 
     $symbols = array_values(array_filter(array_map('trim', explode(',', $symbols_param)), fn ($x) => $x !== ''));
+    foreach ($symbols as $symbol) {
+        if (!preg_match('/^[A-Z0-9]([A-Z0-9\\.\\-]{0,18}[A-Z0-9])?$/i', $symbol)) {
+            http_response_code(400);
+            echo json_encode(['error' => "Invalid symbol format: {$symbol}"], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+            return;
+        }
+    }
     $results = analyze_portfolio($symbols, false);
     echo json_encode($results, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 }
