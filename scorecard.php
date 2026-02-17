@@ -584,31 +584,25 @@ function flatten_quote_data(array $quote): array {
     return $flat;
 }
 
-function fetch_json(string $url): array {
-    $context = stream_context_create([
-        'http' => [
-            'method' => 'GET',
-            'timeout' => 15,
-            'header' => "User-Agent: Mozilla/5.0\r\nAccept: application/json\r\n",
-        ],
-    ]);
+function create_yahoo_client(): \Scheb\YahooFinanceApi\ApiClient {
+    static $client = null;
+    if ($client instanceof \Scheb\YahooFinanceApi\ApiClient) {
+        return $client;
+    }
 
-    $errorMessage = null;
-    set_error_handler(static function (int $severity, string $message) use (&$errorMessage): bool {
-        $errorMessage = $message;
-        return true;
-    });
-    $content = file_get_contents($url, false, $context);
-    restore_error_handler();
-    if ($content === false) {
-        $details = $errorMessage ? " ({$errorMessage})" : '';
-        throw new RuntimeException("Failed to fetch URL: {$url}{$details}");
+    $autoloadPath = __DIR__ . '/vendor/autoload.php';
+    if (!is_file($autoloadPath)) {
+        throw new RuntimeException('Missing Composer autoload. Run: composer install');
     }
-    $json = json_decode($content, true);
-    if (!is_array($json)) {
-        throw new RuntimeException("Invalid JSON from URL: {$url}");
-    }
-    return $json;
+    require_once $autoloadPath;
+
+    $client = \Scheb\YahooFinanceApi\ApiClientFactory::createApiClient(
+        clientOptions: ['timeout' => 15, 'headers' => ['User-Agent' => 'Mozilla/5.0']],
+        retries: 2,
+        retryDelay: 500
+    );
+
+    return $client;
 }
 
 function resolve_symbol(string $symbol): string {
@@ -616,20 +610,24 @@ function resolve_symbol(string $symbol): string {
         return strtoupper($symbol);
     }
 
-    $q = rawurlencode($symbol);
-    $json = fetch_json("https://query1.finance.yahoo.com/v1/finance/search?q={$q}");
-    $quotes = safe_get($json, 'quotes', []);
-    if (is_array($quotes) && isset($quotes[0]['symbol'])) {
-        return (string) $quotes[0]['symbol'];
+    $search = create_yahoo_client()->search($symbol);
+    if (is_array($search) && isset($search[0]) && $search[0] instanceof \Scheb\YahooFinanceApi\Results\SearchResult) {
+        $resolved = $search[0]->getSymbol();
+        if (is_string($resolved) && $resolved !== '') {
+            return $resolved;
+        }
     }
+
     return strtoupper($symbol);
 }
 
 function fetch_yahoo_info(string $symbol): array {
     $resolved = resolve_symbol($symbol);
-    $modules = implode(',', ['price', 'summaryProfile', 'summaryDetail', 'financialData', 'defaultKeyStatistics']);
-    $summary = fetch_json("https://query2.finance.yahoo.com/v10/finance/quoteSummary/" . rawurlencode($resolved) . "?modules={$modules}");
-    $result = safe_get(safe_get($summary, 'quoteSummary', []), 'result', []);
+
+    $result = create_yahoo_client()->getStockSummary(
+        $resolved,
+        ['price', 'summaryProfile', 'summaryDetail', 'financialData', 'defaultKeyStatistics']
+    );
 
     if (!is_array($result) || !isset($result[0]) || !is_array($result[0])) {
         throw new RuntimeException('No quoteSummary data found');
