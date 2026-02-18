@@ -66,7 +66,16 @@ const DEFAULT_PORTFOLIO = [
 ];
 
 function safe_get($d, string $key, $default = null) {
-    return is_array($d) && array_key_exists($key, $d) ? $d[$key] : $default;
+    if (!is_array($d) || !array_key_exists($key, $d)) {
+        return $default;
+    }
+
+    $value = $d[$key];
+    if (is_array($value) && array_key_exists('raw', $value)) {
+        return $value['raw'];
+    }
+
+    return $value;
 }
 
 function is_missing($x): bool {
@@ -77,11 +86,17 @@ function normalize_yield_fraction($y) {
     if ($y === null) {
         return null;
     }
+    if (!is_int($y) && !is_float($y)) {
+        return null;
+    }
     return $y > 1.0 ? ($y / 100.0) : $y;
 }
 
 function normalize_payout_ratio($p) {
     if ($p === null) {
+        return null;
+    }
+    if (!is_int($p) && !is_float($p)) {
         return null;
     }
     return $p >= 0 ? $p : null;
